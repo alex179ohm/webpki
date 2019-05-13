@@ -17,6 +17,7 @@ use crate::{
     der, name, signed_data, time, Error, SignatureAlgorithm, TrustAnchor,
 };
 use untrusted;
+use log::{debug, warn};
 
 pub fn build_chain(
     required_eku_if_present: KeyPurposeId, supported_sig_algs: &[&SignatureAlgorithm],
@@ -24,6 +25,7 @@ pub fn build_chain(
     time: time::Time, sub_ca_count: usize,
 ) -> Result<(), Error> {
     let used_as_ca = used_as_ca(&cert.ee_or_ca);
+    debug!("used_as_ca: {:?}", used_as_ca);
 
     check_issuer_independent_properties(
         cert,
@@ -40,6 +42,7 @@ pub fn build_chain(
             const MAX_SUB_CA_COUNT: usize = 6;
 
             if sub_ca_count >= MAX_SUB_CA_COUNT {
+                warn!("sub_ca_count is greater than MAX_SUB_CA_COUNT: {} >= {}", sub_ca_count, MAX_SUB_CA_COUNT);
                 return Err(Error::UnknownIssuer);
             }
         },
@@ -53,16 +56,19 @@ pub fn build_chain(
     match loop_while_non_fatal_error(trust_anchors, |trust_anchor: &TrustAnchor| {
         let trust_anchor_subject = untrusted::Input::from(trust_anchor.subject);
         if cert.issuer != trust_anchor_subject {
+            warn!("cert.issuer is not equal to trust_anchor_subject: {:?} != {:?}", cert.issuer, trust_anchor_subject);
             return Err(Error::UnknownIssuer);
         }
 
         let name_constraints = trust_anchor.name_constraints.map(untrusted::Input::from);
+        debug!("name_constraints: {:?}", name_constraints);
 
         untrusted::read_all_optional(name_constraints, Error::BadDER, |value| {
             name::check_name_constraints(value, &cert)
         })?;
 
         let trust_anchor_spki = untrusted::Input::from(trust_anchor.spki);
+        debug!("trust anchor spki: {:?}", trust_anchor_spki);
 
         // TODO: check_distrust(trust_anchor_subject, trust_anchor_spki)?;
 
@@ -82,6 +88,7 @@ pub fn build_chain(
         let potential_issuer = cert::parse_cert(*cert_der, EndEntityOrCA::CA(&cert))?;
 
         if potential_issuer.subject != cert.issuer {
+            warn!("potential_issuer.subject is different than cert.issuer: {:?} != {:?}", potential_issuer.subject, cert.issuer);
             return Err(Error::UnknownIssuer);
         }
 
@@ -89,6 +96,7 @@ pub fn build_chain(
         let mut prev = cert;
         loop {
             if potential_issuer.spki == prev.spki && potential_issuer.subject == prev.subject {
+                warn!("potential_issuer.spki and potential_issuer.subject are the same of previous certificate:\npotential_issuer.spki: {:?}\nprev.spki: {:?}\npotential.subject: {:?}\nprev.subject: {:?}", potential_issuer.spki, prev.spki, potential_issuer.subject, prev.subject);
                 return Err(Error::UnknownIssuer);
             }
             match &prev.ee_or_ca {
@@ -193,7 +201,7 @@ fn check_validity(input: &mut untrusted::Reader, time: time::Time) -> Result<(),
     Ok(())
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum UsedAsCA {
     Yes,
     No,
